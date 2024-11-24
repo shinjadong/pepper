@@ -1,82 +1,153 @@
 import { NextResponse } from 'next/server';
-import prisma from '@/services/prisma-client';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
 
-export async function GET() {
+export async function POST(request: Request) {
   try {
-    const fetchFolders = async (folderId: string | null = null) => {
-      const folders = await prisma.folder.findMany({
-        where: {
-          parentId: folderId,
-        },
-        include: {
-          notes: true,
-          children: true,
-        },
-      });
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-      for (const folder of folders) {
-        folder.children = await fetchFolders(folder.id);
-      }
+    if (!session?.user?.id) {
+      console.error('No session found');
+      return new NextResponse('Unauthorized', { status: 401 });
+    }
 
-      return folders;
-    };
-    const folders = await fetchFolders(null);
-    return NextResponse.json(folders);
-  } catch (error) {
-    return NextResponse.json({ error: 'Error fetching folders' }, { status: 500 });
+    const { title, parentId } = await request.json();
+
+    const { data, error } = await supabase
+      .from('folders')
+      .insert([
+        {
+          title,
+          user_id: session.user.id,
+          parent_id: parentId || null,
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return new NextResponse(error.message, { status: 500 });
+    }
+
+    return NextResponse.json(data);
+  } catch (error: any) {
+    console.error('Error creating folder:', error);
+    return new NextResponse(error.message || 'Internal Server Error', { status: 500 });
   }
 }
 
-export async function POST(req: Request) {
+export async function GET(request: Request) {
   try {
-    const { parentId } = await req.json();
-    const newFolder = await prisma.folder.create({
-      data: {
-        title: '(No title)',
-        type: 'folder',
-        parentId: parentId ? parentId : null,
-        notes: {
-          create: [],
-        },
-      },
-      include: {
-        notes: true,
-      },
-    });
-    return NextResponse.json(newFolder);
-  } catch (error) {
-    return NextResponse.json({ error: 'Error creating folder' }, { status: 500 });
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.user?.id) {
+      console.error('No session found');
+      return new NextResponse('Unauthorized', { status: 401 });
+    }
+
+    const { data, error } = await supabase
+      .from('folders')
+      .select('*')
+      .eq('user_id', session.user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return new NextResponse(error.message, { status: 500 });
+    }
+
+    return NextResponse.json(data);
+  } catch (error: any) {
+    console.error('Error getting folders:', error);
+    return new NextResponse(error.message || 'Internal Server Error', { status: 500 });
   }
 }
 
-export async function DELETE(request: Request) {
-  const { id } = await request.json();
-
-  if (!id) return NextResponse.json({ error: 'Folder ID is required' }, { status: 400 });
-
+export async function PUT(req: Request) {
   try {
-    const deletedNote = await prisma.folder.delete({
-      where: { id },
-    });
-    return NextResponse.json(deletedNote);
-  } catch (error) {
-    return NextResponse.json({ error: 'Failed to delete folder' }, { status: 500 });
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('Session error:', sessionError);
+      return new NextResponse('Session error', { status: 401 });
+    }
+
+    if (!session) {
+      return new NextResponse('Unauthorized', { status: 401 });
+    }
+
+    const body = await req.json();
+    const { id, ...data } = body;
+    const { data: folder, error } = await supabase
+      .from('folders')
+      .update({ ...data })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return new NextResponse(error.message, { status: 500 });
+    }
+
+    return NextResponse.json(folder);
+  } catch (error: any) {
+    console.error('Error updating folder:', error);
+    return new NextResponse(error.message, { status: 500 });
   }
 }
 
-export async function PUT(request: Request) {
-  const { id, title } = await request.json();
-
-  if (!id || !title) return NextResponse.json({ error: 'Title and is required' }, { status: 400 });
-
+export async function DELETE(req: Request) {
   try {
-    const updateFolderTitle = await prisma.folder.update({
-      where: { id },
-      data: { title },
-    });
-    return NextResponse.json(updateFolderTitle);
-  } catch (error) {
-    console.error('Error updating post:', error);
-    return NextResponse.json({ error: 'Error updating post' }, { status: 500 });
+    const cookieStore = cookies();
+    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('Session error:', sessionError);
+      return new NextResponse('Session error', { status: 401 });
+    }
+
+    if (!session) {
+      return new NextResponse('Unauthorized', { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return new NextResponse('Folder ID is required', { status: 400 });
+    }
+
+    const { error } = await supabase.from('folders').delete().eq('id', id);
+
+    if (error) {
+      console.error('Supabase error:', error);
+      return new NextResponse(error.message, { status: 500 });
+    }
+
+    return new NextResponse(null, { status: 204 });
+  } catch (error: any) {
+    console.error('Error deleting folder:', error);
+    return new NextResponse(error.message, { status: 500 });
   }
 }
