@@ -40,6 +40,10 @@ next-env.d.ts
 *.db
 prisma/migrations
 
+# docker
 Dockerfile
 docker-compose.yaml
 .dockerignore
+
+# docs
+/0_docs
