@@ -1,24 +1,21 @@
 import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import type { Database } from './types/database';
 
-export async function middleware(request: NextRequest) {
+export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
-  const supabase = createMiddlewareClient({ req: request, res });
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  // If accessing an API route and no session, return 401
-  if (request.nextUrl.pathname.startsWith('/api/') && !session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  
+  try {
+    const supabase = createMiddlewareClient<Database>({ req, res });
+    await supabase.auth.getSession();
+  } catch (e) {
+    console.error('Supabase middleware error:', e);
   }
-
+  
   return res;
 }
 
-// 미들웨어를 적용할 경로 지정
 export const config = {
   matcher: [
     /*
@@ -26,7 +23,8 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * - public (public files)
      */
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|favicon.ico|public).*)',
   ],
 };

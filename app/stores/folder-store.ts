@@ -1,40 +1,56 @@
 import { create } from 'zustand';
-import { supabaseClient } from '@/app/lib/supabase';
-
-export interface Folder {
-  id: string;
-  title: string;
-  parent_id: string | null;
-  user_id: string;
-  created_at: string;
-  updated_at: string;
-}
+import { supabaseClient } from '../lib/supabase';
+import { Folder } from '@/types';
+import { buildFolderTree, sortFolders } from '../lib/folder-utils';
+import { toast } from 'sonner';
 
 interface FolderStore {
   folders: Folder[];
-  selectedFolderId: string | null;
+  currentFolder: Folder | null;
   isLoading: boolean;
   error: string | null;
   setFolders: (folders: Folder[]) => void;
   addFolder: (folder: Partial<Folder>) => Promise<void>;
   updateFolder: (folderId: string, updates: Partial<Folder>) => Promise<void>;
   deleteFolder: (folderId: string) => Promise<void>;
-  setSelectedFolderId: (folderId: string | null) => void;
+  setCurrentFolder: (folder: Folder | null) => void;
   fetchFolders: () => Promise<void>;
+  moveFolder: (folderId: string, targetParentId: string | null) => Promise<void>;
   setupRealtime: () => () => void;
+  getFolderPath: (folderId: string) => Promise<Folder[]>;
 }
 
 export const useFolderStore = create<FolderStore>((set, get) => ({
   folders: [],
-  selectedFolderId: null,
+  currentFolder: null,
   isLoading: false,
   error: null,
 
   setFolders: (folders) => set({ folders }),
+  setCurrentFolder: (folder) => set({ currentFolder: folder }),
+
+  fetchFolders: async () => {
+    try {
+      set({ isLoading: true });
+      const { data, error } = await supabaseClient
+        .from('folders')
+        .select('*')
+        .order('title', { ascending: true });
+
+      if (error) throw error;
+      const sortedFolders = sortFolders(data || []);
+      set({ folders: sortedFolders });
+    } catch (error: any) {
+      console.error('Failed to fetch folders:', error);
+      set({ error: error.message });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
 
   addFolder: async (folder) => {
     try {
-      set({ isLoading: true, error: null });
+      set({ isLoading: true });
       const { data, error } = await supabaseClient
         .from('folders')
         .insert([folder])
@@ -42,21 +58,25 @@ export const useFolderStore = create<FolderStore>((set, get) => ({
         .single();
 
       if (error) throw error;
+      if (!data) throw new Error('폴더 생성에 실패했습니다');
 
       set((state) => ({
-        folders: [...state.folders, data],
-        selectedFolderId: data.id,
-        isLoading: false,
+        folders: sortFolders([...state.folders, data]),
       }));
+      toast.success('폴더가 생성되었습니다');
     } catch (error: any) {
-      set({ error: error.message, isLoading: false });
+      console.error('Failed to add folder:', error);
+      set({ error: error.message });
+      toast.error('폴더 생성에 실패했습니다');
       throw error;
+    } finally {
+      set({ isLoading: false });
     }
   },
 
   updateFolder: async (folderId, updates) => {
     try {
-      set({ isLoading: true, error: null });
+      set({ isLoading: true });
       const { data, error } = await supabaseClient
         .from('folders')
         .update(updates)
@@ -65,22 +85,34 @@ export const useFolderStore = create<FolderStore>((set, get) => ({
         .single();
 
       if (error) throw error;
+      if (!data) throw new Error('폴더를 찾을 수 없습니다');
 
       set((state) => ({
-        folders: state.folders.map((folder) =>
-          folder.id === folderId ? { ...folder, ...data } : folder
+        folders: sortFolders(
+          state.folders.map((f) => (f.id === folderId ? data : f))
         ),
-        isLoading: false,
       }));
+      toast.success('폴더가 수정되었습니다');
     } catch (error: any) {
-      set({ error: error.message, isLoading: false });
+      console.error('Failed to update folder:', error);
+      set({ error: error.message });
+      toast.error('폴더 수정에 실패했습니다');
       throw error;
+    } finally {
+      set({ isLoading: false });
     }
   },
 
   deleteFolder: async (folderId) => {
     try {
-      set({ isLoading: true, error: null });
+      set({ isLoading: true });
+
+      // 하위 폴더 확인
+      const subFolders = get().folders.filter((f) => f.parent_id === folderId);
+      if (subFolders.length > 0) {
+        throw new Error('하위 폴더가 있는 폴더는 삭제할 수 없습니다');
+      }
+
       const { error } = await supabaseClient
         .from('folders')
         .delete()
@@ -89,38 +121,87 @@ export const useFolderStore = create<FolderStore>((set, get) => ({
       if (error) throw error;
 
       set((state) => ({
-        folders: state.folders.filter((folder) => folder.id !== folderId),
-        selectedFolderId: state.selectedFolderId === folderId ? null : state.selectedFolderId,
-        isLoading: false,
+        folders: state.folders.filter((f) => f.id !== folderId),
+        currentFolder:
+          state.currentFolder?.id === folderId ? null : state.currentFolder,
       }));
+      toast.success('폴더가 삭제되었습니다');
     } catch (error: any) {
-      set({ error: error.message, isLoading: false });
+      console.error('Failed to delete folder:', error);
+      set({ error: error.message });
+      toast.error(
+        error.message === '하위 폴더가 있는 폴더는 삭제할 수 없습니다'
+          ? error.message
+          : '폴더 삭제에 실패했습니다'
+      );
       throw error;
+    } finally {
+      set({ isLoading: false });
     }
   },
 
-  setSelectedFolderId: (folderId) => set({ selectedFolderId: folderId }),
-
-  fetchFolders: async () => {
+  moveFolder: async (folderId, targetParentId) => {
     try {
-      set({ isLoading: true, error: null });
+      set({ isLoading: true });
+
+      // 순환 참조 체크
+      if (targetParentId) {
+        const path = await get().getFolderPath(targetParentId);
+        if (path.some((folder) => folder.id === folderId)) {
+          throw new Error('폴더를 자신의 하위 폴더로 이동할 수 없습니다');
+        }
+      }
+
+      const folders = get().folders;
+      const folderToMove = folders.find((folder) => folder.id === folderId);
+      if (!folderToMove) {
+        throw new Error('이동할 폴더를 찾을 수 없습니다');
+      }
+
+      // 낙관적 업데이트
+      const updatedFolders = folders.map((folder) =>
+        folder.id === folderId ? { ...folder, parent_id: targetParentId } : folder
+      );
+      set({ folders: sortFolders(updatedFolders) });
+
       const { data, error } = await supabaseClient
         .from('folders')
-        .select('*')
-        .order('created_at', { ascending: true });
+        .update({ parent_id: targetParentId })
+        .eq('id', folderId)
+        .select()
+        .single();
 
-      if (error) throw error;
+      if (error) {
+        // 실패 시 롤백
+        set({ folders });
+        throw error;
+      }
 
-      set({ folders: data, isLoading: false });
+      if (!data) {
+        set({ folders });
+        throw new Error('폴더를 찾을 수 없습니다');
+      }
+
+      toast.success('폴더가 이동되었습니다');
     } catch (error: any) {
-      set({ error: error.message, isLoading: false });
+      console.error('Failed to move folder:', error);
+      set({ error: error.message });
+      toast.error(
+        error.message === '폴더를 자신의 하위 폴더로 이동할 수 없습니다' ||
+        error.message === '이동할 폴더를 찾을 수 없습니다' ||
+        error.message === '폴더를 찾을 수 없습니다'
+          ? error.message
+          : '폴더 이동에 실패했습니다'
+      );
       throw error;
+    } finally {
+      set({ isLoading: false });
     }
   },
 
   setupRealtime: () => {
-    const subscription = supabaseClient
-      .channel('folders_changes')
+    const channel = supabaseClient
+      .channel('folders')
       .on(
         'postgres_changes',
         {
@@ -129,34 +210,30 @@ export const useFolderStore = create<FolderStore>((set, get) => ({
           table: 'folders',
         },
         async (payload) => {
-          const { eventType, new: newRecord, old: oldRecord } = payload;
-          const store = get();
-
-          switch (eventType) {
-            case 'INSERT':
-              set({ folders: [...store.folders, newRecord as Folder] });
-              break;
-            case 'UPDATE':
-              set({
-                folders: store.folders.map((folder) =>
-                  folder.id === newRecord.id ? { ...folder, ...newRecord } : folder
-                ),
-              });
-              break;
-            case 'DELETE':
-              set({
-                folders: store.folders.filter((folder) => folder.id !== oldRecord.id),
-                selectedFolderId:
-                  store.selectedFolderId === oldRecord.id ? null : store.selectedFolderId,
-              });
-              break;
-          }
+          const { eventType } = payload;
+          await get().fetchFolders();
+          console.log(`Folder ${eventType}`);
         }
       )
       .subscribe();
 
     return () => {
-      subscription.unsubscribe();
+      channel.unsubscribe();
     };
+  },
+
+  getFolderPath: async (folderId) => {
+    const path: Folder[] = [];
+    let currentId = folderId;
+    const folders = get().folders;
+
+    while (currentId) {
+      const folder = folders.find((f) => f.id === currentId);
+      if (!folder) break;
+      path.unshift(folder);
+      currentId = folder.parent_id;
+    }
+
+    return path;
   },
 }));

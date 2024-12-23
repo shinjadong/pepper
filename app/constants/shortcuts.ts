@@ -74,4 +74,33 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     action: actions.toggleSidebar,
     enabled: true,
   },
+  {
+    id: 'note.copy',
+    keys: ['ctrl+c'],
+    description: '선택한 노트 복사',
+    handler: (context) => {
+      const { selectedNote } = context;
+      if (!selectedNote) return;
+      context.clipboard.copyNote(selectedNote);
+    },
+  },
+  {
+    id: 'note.cut',
+    keys: ['ctrl+x'],
+    description: '선택한 노트 잘라내기',
+    handler: (context) => {
+      const { selectedNote } = context;
+      if (!selectedNote) return;
+      context.clipboard.cutNote(selectedNote);
+    },
+  },
+  {
+    id: 'note.paste',
+    keys: ['ctrl+v'],
+    description: '노트 붙여넣기',
+    handler: (context) => {
+      const { selectedFolderId } = context;
+      context.clipboard.pasteNote(selectedFolderId);
+    },
+  },
 ];

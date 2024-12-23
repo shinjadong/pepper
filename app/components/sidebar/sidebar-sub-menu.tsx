@@ -1,25 +1,36 @@
-'use client';
+import React, { useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 
-import React from 'react';
+interface MenuItemProps {
+  label: string | React.ReactNode;
+  subMenu?: MenuItemProps[] | undefined;
+  children?: React.ReactNode;
+}
 
-export default function SidebarSubMenu() {
+const SidebarSubMenu = ({ label, children }: MenuItemProps) => {
+  const [openMenu, setOpenMenu] = useState<boolean>(false);
+
+  const openMenuHandler = () => setOpenMenu((prev) => !prev);
+
   return (
-    <div className="mb-4">
-      <h2 className="mb-2 text-sm font-semibold uppercase text-gray-400">Quick Access</h2>
-      <nav>
-        <ul className="space-y-1">
-          <li>
-            <a href="#" className="block rounded px-3 py-2 hover:bg-gray-700">
-              Recent Notes
-            </a>
-          </li>
-          <li>
-            <a href="#" className="block rounded px-3 py-2 hover:bg-gray-700">
-              Favorites
-            </a>
-          </li>
-        </ul>
-      </nav>
+    <div className="uppercase font-bold text-xs cursor-pointer">
+      <div
+        onClick={openMenuHandler}
+        className="flex items-center justify-between px-1.5 py-0.5 rounded-full hover:bg-secondary-color/50"
+      >
+        <div>{label}</div>
+        {children ? <ChevronRight size={14} /> : null}
+      </div>
+
+      {openMenu && children ? (
+        <div
+          className={`flex flex-col gap-1 absolute right-0 top-0 p-1 -translate-y-full translate-x-full border border-border-color rounded-lg text-text-color bg-primary-color`}
+        >
+          {children}
+        </div>
+      ) : null}
     </div>
   );
-}
+};
+
+export default SidebarSubMenu;

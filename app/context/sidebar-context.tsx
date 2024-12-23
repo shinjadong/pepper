@@ -5,9 +5,10 @@ import { useNoteStore } from '../stores/note-store';
 import { useFolderStore } from '../stores/folder-store';
 import { useSearchStore } from '../stores/search-store';
 import { toast } from 'sonner';
+import { supabase } from '../lib/supabase';
 
 interface SidebarContextType {
-  isOpen: boolean;
+  isSidebarOpen: boolean;
   toggleSidebar: () => void;
   createNewNote: () => Promise<void>;
   createNewFolder: () => Promise<void>;
@@ -20,7 +21,7 @@ interface SidebarContextType {
 const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const addNote = useNoteStore((state) => state.addNote);
   const updateNote = useNoteStore((state) => state.updateNote);
   const deleteNote = useNoteStore((state) => state.deleteNote);
@@ -30,15 +31,21 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const clearSearch = useSearchStore((state) => state.clearSearch);
 
   const toggleSidebar = useCallback(() => {
-    setIsOpen((prev) => !prev);
+    setIsSidebarOpen((prev) => !prev);
   }, []);
 
   const createNewNote = useCallback(async () => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error('User not authenticated');
+      }
+      
       await addNote({
         title: 'Untitled Note',
         content: '',
         folder_id: null,
+        user_id: user.id
       });
       clearSearch();
       toast.success('New note created');
@@ -50,9 +57,15 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
   const createNewFolder = useCallback(async () => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error('User not authenticated');
+      }
+
       await addFolder({
         title: 'New Folder',
         parent_id: null,
+        user_id: user.id
       });
       clearSearch();
       toast.success('New folder created');
@@ -109,7 +122,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   return (
     <SidebarContext.Provider
       value={{
-        isOpen,
+        isSidebarOpen,
         toggleSidebar,
         createNewNote,
         createNewFolder,
@@ -124,10 +137,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useSidebar() {
+export const useSidebarContext = () => {
   const context = useContext(SidebarContext);
   if (context === undefined) {
-    throw new Error('useSidebar must be used within a SidebarProvider');
+    throw new Error('useSidebarContext must be used within a SidebarProvider');
   }
   return context;
-}
+};
